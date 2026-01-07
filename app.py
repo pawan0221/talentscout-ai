@@ -1,18 +1,29 @@
 import streamlit as st
 import os
+import re
 from openai import OpenAI
 
-# ================== OPENAI CLIENT ==================
+# ================= OPENAI CLIENT =================
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ================== STREAMLIT CONFIG ==================
+# ================= STREAMLIT CONFIG =================
 st.set_page_config(
     page_title="TalentScout AI",
     page_icon="🤖",
     layout="centered"
 )
 
-# ================== SESSION STATE ==================
+# ================= VALIDATION FUNCTIONS =================
+def is_valid_email(email):
+    return re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email)
+
+def is_valid_phone(phone):
+    return re.match(r"^\+?\d{8,15}$", phone)
+
+def is_valid_experience(exp):
+    return exp.isdigit() and 0 <= int(exp) <= 50
+
+# ================= SESSION STATE =================
 if "step" not in st.session_state:
     st.session_state.step = "name"
 
@@ -25,17 +36,20 @@ if "messages" not in st.session_state:
 if "tech_questions" not in st.session_state:
     st.session_state.tech_questions = []
 
-if "tech_q_index" not in st.session_state:
-    st.session_state.tech_q_index = 0
+if "tech_index" not in st.session_state:
+    st.session_state.tech_index = 0
 
-# ================== UI HEADER ==================
+if "awaiting_answer" not in st.session_state:
+    st.session_state.awaiting_answer = False
+
+# ================= UI HEADER =================
 st.title("🤖 TalentScout AI")
 st.caption("AI Hiring Assistant – Initial Screening")
 st.markdown("🔒 *Session-only. No personal data is stored.*")
 st.divider()
 
-# ================== STEP QUESTIONS (DETERMINISTIC) ==================
-STEP_QUESTIONS = {
+# ================= QUESTIONS =================
+QUESTIONS = {
     "name": "What is your **full name**?",
     "email": "What is your **email address**?",
     "phone": "What is your **phone number**?",
@@ -53,103 +67,121 @@ STEP_ORDER = [
     "position",
     "location",
     "tech_stack",
-    "technical_questions",
+    "technical",
     "end"
 ]
 
-# ================== INITIAL BOT MESSAGE ==================
+# ================= INITIAL MESSAGE =================
 if not st.session_state.messages:
     st.session_state.messages.append({
         "role": "assistant",
         "content": (
             "Hello! 👋 I’m **TalentScout**, your AI hiring assistant.\n\n"
-            f"{STEP_QUESTIONS['name']}"
+            f"{QUESTIONS['name']}"
         )
     })
 
-# ================== DISPLAY CHAT ==================
+# ================= DISPLAY CHAT =================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# ================== USER INPUT ==================
+# ================= USER INPUT =================
 user_input = st.chat_input("Type your answer here (or 'exit' to quit)")
 
-# ================== EXIT HANDLING ==================
+# ================= EXIT =================
 if user_input and user_input.lower() in ["exit", "quit", "bye"]:
     st.session_state.messages.append({
         "role": "assistant",
         "content": (
             "Thank you for your time! 🙌\n\n"
             "Our HR team will contact you within **48 hours**.\n\n"
-            "Wishing you the best! 🚀"
+            "Best of luck! 🚀"
         )
     })
     st.stop()
 
-# ================== PROCESS INPUT ==================
+# ================= PROCESS INPUT =================
 if user_input:
-    # Store user message
     st.session_state.messages.append({
         "role": "user",
         "content": user_input
     })
 
     step = st.session_state.step
+    error = None
 
-    # -------- DATA COLLECTION STEPS --------
-    if step in STEP_QUESTIONS:
-        st.session_state.candidate[step] = user_input
+    # ---------- VALIDATION ----------
+    if step == "email" and not is_valid_email(user_input):
+        error = "❌ Please enter a valid email address (example: name@gmail.com)."
 
-        next_step_index = STEP_ORDER.index(step) + 1
-        st.session_state.step = STEP_ORDER[next_step_index]
+    elif step == "phone" and not is_valid_phone(user_input):
+        error = "❌ Please enter a valid phone number (8–15 digits, numbers only)."
 
-        next_step = st.session_state.step
+    elif step == "experience" and not is_valid_experience(user_input):
+        error = "❌ Please enter experience as a number (e.g., 2, 5, 10)."
 
-        if next_step in STEP_QUESTIONS:
+    # ---------- DATA COLLECTION ----------
+    if step in QUESTIONS:
+        if error:
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": STEP_QUESTIONS[next_step]
+                "content": error + "\n\n" + QUESTIONS[step]
             })
+        else:
+            st.session_state.candidate[step] = user_input
+            next_step = STEP_ORDER[STEP_ORDER.index(step) + 1]
+            st.session_state.step = next_step
 
-    # -------- TECHNICAL QUESTIONS (LLM) --------
-    elif step == "technical_questions":
+            if next_step in QUESTIONS:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": QUESTIONS[next_step]
+                })
 
-        # First time → generate questions
+            if next_step == "technical":
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "Great! Now let’s move on to a few technical questions."
+                })
+                st.session_state.awaiting_answer = False
+
+    # ---------- TECHNICAL QUESTIONS ----------
+    elif step == "technical":
+
+        # Move index only after answering a question
+        if st.session_state.awaiting_answer:
+            st.session_state.tech_index += 1
+            st.session_state.awaiting_answer = False
+
+        # Generate questions once
         if not st.session_state.tech_questions:
-            with st.spinner("Generating technical questions…"):
-                prompt = f"""
+            prompt = f"""
 You are a technical interviewer.
 
 Candidate tech stack:
 {st.session_state.candidate.get("tech_stack")}
 
 Generate exactly 3 technical interview questions.
-Return them as a numbered list.
+Return one question per line.
 """
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": prompt}],
+                temperature=0.4
+            )
 
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": prompt}],
-                    temperature=0.4
-                )
+            st.session_state.tech_questions = [
+                q.strip() for q in response.choices[0].message.content.split("\n") if q.strip()
+            ]
 
-                questions_text = response.choices[0].message.content
-                st.session_state.tech_questions = [
-                    q.strip("0123456789. ").strip()
-                    for q in questions_text.split("\n")
-                    if q.strip()
-                ]
-
-        # Ask next technical question
-        idx = st.session_state.tech_q_index
-
-        if idx < len(st.session_state.tech_questions):
+        # Ask next question
+        if st.session_state.tech_index < len(st.session_state.tech_questions):
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": st.session_state.tech_questions[idx]
+                "content": st.session_state.tech_questions[st.session_state.tech_index]
             })
-            st.session_state.tech_q_index += 1
+            st.session_state.awaiting_answer = True
         else:
             st.session_state.step = "end"
             st.session_state.messages.append({
@@ -158,16 +190,9 @@ Return them as a numbered list.
                     f"Thank you, **{st.session_state.candidate.get('name')}**! 🙌\n\n"
                     "We’ve completed the initial screening.\n\n"
                     "📌 **Next Steps:**\n"
-                    "• HR will review your responses\n"
+                    "• HR will review your profile\n"
                     "• You’ll hear back within **48 hours**\n\n"
                     "Best of luck! 🚀"
                 )
             })
-
-    # -------- MOVE TO TECH QUESTIONS --------
-    if st.session_state.step == "technical_questions" and not st.session_state.tech_questions:
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": "Great! Let’s move on to a few technical questions."
-        })
 
