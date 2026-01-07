@@ -1,40 +1,37 @@
 import streamlit as st
-import openai
-from datetime import datetime
+import google.generativeai as genai
+import os
 
 # --- CONFIGURATION & SETUP ---
-# [cite: 17, 18, 53] Setting up Streamlit Page Configuration
 st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="🤖")
 
 # --- SIDEBAR & API SETUP ---
 with st.sidebar:
     st.header("Configuration")
-    st.write("This bot uses OpenAI's GPT models.")
-    # In a real production environment, use st.secrets or environment variables
-    api_key = st.text_input("Enter OpenAI API Key", type="password")
+    st.write("Powered by **Google Gemini Pro**")
+    
+    # Securely input API Key
+    api_key = st.text_input("Enter Google Gemini API Key", type="password")
     
     st.info(
-        "**Note:** To run this locally, you need an OpenAI API Key. "
-        "If you don't have one, the bot will use a simulated mode for UI demonstration."
+        "**Note:** You can get a free API key from Google AI Studio. "
+        "The bot will use simulated responses if no key is provided."
     )
     
-    # [cite: 21] Exit button to clear session
+    # Button to reset the conversation
     if st.button("Reset Conversation"):
         st.session_state.messages = []
-        st.session_state.candidate_info = {}
+        st.session_state.chat_history = []  # Specific history format for Gemini
         st.rerun()
 
-# --- PROMPT ENGINEERING [cite: 10, 57] ---
-# This system prompt defines the persona, goals, and logic for the LLM.
-# It covers Information Gathering [cite: 22], Tech Stack declaration[cite: 32],
-# and Question Generation[cite: 34].
-
-SYSTEM_PROMPT = """
+# --- PROMPT ENGINEERING ---
+# We pass this system instruction to the model configuration.
+SYSTEM_INSTRUCTION = """
 You are the intelligent Hiring Assistant for "TalentScout", a recruitment agency. 
 Your goal is to screen candidates by gathering information and asking technical questions.
 
 ### PHASE 1: INFORMATION GATHERING
-You must collect the following details. Be conversational, do not ask for everything in one massive list. Ask for 1-2 items at a time to maintain a natural flow.
+You must collect the following details. Be conversational; ask for 1-2 items at a time.
 Required Information:
 1. Full Name
 2. Email Address
@@ -49,100 +46,110 @@ Once (and only once) you have confirmed the candidate's **Tech Stack**, you must
 - Example: If they know Python and Django, ask about decorators or Django ORM.
 - Present these questions to the candidate and ask them to answer briefly.
 
-### RULES & BEHAVIOR
+### RULES
 - **Context Awareness:** Remember previous answers.
-- **Fallback:** If the user asks about the weather or general topics, politely steer them back to the hiring process.
-- **Exit:** If the user says "exit", "quit", or "bye", thank them and end the conversation[cite: 45].
-- **Tone:** Professional, encouraging, and efficient.
+- **Fallback:** If the user deviates (e.g., asks about weather), politely steer them back.
+- **Exit:** If the user says "exit", "quit", or "bye", thank them and end the conversation.
 """
 
 # --- SESSION STATE INITIALIZATION ---
-#  Maintaining context of the conversation
+# We store messages for the UI and a separate history list for the Gemini API
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "assistant", "content": "Hello! Welcome to TalentScout. I'm here to assist with your initial screening. To get started, could you please tell me your full name?"} # [cite: 20] Greeting
+        {"role": "assistant", "content": "Hello! Welcome to TalentScout. I'm here to assist with your initial screening. To get started, could you please tell me your full name?"}
     ]
 
 # --- HELPER FUNCTIONS ---
 
-def get_llm_response(messages, api_key):
+def get_gemini_response(user_input, history, api_key):
     """
-    Fetches response from OpenAI GPT. 
-    [cite: 54] Utilizing pre-trained models.
+    Interacts with the Google Gemini API.
     """
     if not api_key:
-        # SIMULATED RESPONSE for demo purposes if no key is provided [cite: 67]
-        last_user_msg = messages[-1]["content"].lower()
-        if "python" in last_user_msg:
-            return "Great. Since you mentioned Python, here are 3 technical questions:\n1. Explain list comprehensions.\n2. What is the GIL?\n3. Difference between list and tuple."
-        return "I am in DEMO mode. Please provide an API key to have a real conversation. (Simulated: Please tell me your email address?)"
+        # SIMULATED RESPONSE for testing without burning quota or if key is missing
+        if "python" in user_input.lower():
+            return "Since you mentioned Python, here are 3 questions: 1. What are Python decorators? 2. Explain list comprehensions. 3. Difference between .py and .pyc files?"
+        return "I am in DEMO mode. Please provide a Google API Key. (Simulated: Please tell me your email address?)"
 
     try:
-        client = openai.OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo", # Or gpt-4
-            messages=messages,
-            temperature=0.7
+        # 1. Configure the API
+        genai.configure(api_key=api_key)
+        
+        # 2. Define the Model
+        # We use 'gemini-1.5-flash' for speed/cost or 'gemini-pro' for reasoning
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_INSTRUCTION
         )
-        return response.choices[0].message.content
+
+        # 3. Start Chat with History
+        # Gemini expects history as a list of Content objects or dicts: 
+        # [{'role': 'user', 'parts': ['...']}, {'role': 'model', 'parts': ['...']}]
+        chat = model.start_chat(history=history)
+        
+        # 4. Send Message
+        response = chat.send_message(user_input)
+        return response.text
+        
     except Exception as e:
         return f"Error: {str(e)}"
 
 # --- MAIN UI LAYOUT ---
-# [cite: 17] Clean and intuitive UI
 
 st.title("TalentScout Hiring Assistant 🤖")
 st.markdown("---")
 
-# Display chat history
+# 1. Display Chat History (UI Only)
 for message in st.session_state.messages:
-    # Hide system prompt from UI
-    if message["role"] != "system":
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-# User Input Handling
+# 2. Handle User Input
 if prompt := st.chat_input("Type your response here..."):
-    # 1. Display User Message
+    # Display user message immediately
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # 2. Append to history 
+    # Add to UI history
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # 3. Check for Exit Keywords 
+    # Check for Exit Keywords
     if prompt.lower() in ["exit", "quit", "stop", "bye"]:
-        goodbye_msg = "Thank you for your time. Your details have been recorded. A recruiter will be in touch soon. Goodbye!"
+        goodbye_msg = "Thank you! Your details have been recorded. A recruiter will be in touch. Goodbye!"
         with st.chat_message("assistant"):
             st.markdown(goodbye_msg)
         st.session_state.messages.append({"role": "assistant", "content": goodbye_msg})
         st.stop()
 
-    # 4. Generate Assistant Response
+    # 3. Prepare History for Gemini
+    # We must convert our UI history (Streamlit format) to Gemini format.
+    # Streamlit uses "assistant", Gemini uses "model".
+    gemini_history = []
+    for msg in st.session_state.messages[:-1]: # Exclude the very last prompt we just added, as we send that separately
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg["content"]]})
+
+    # 4. Fetch Response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response_text = get_llm_response(st.session_state.messages, api_key)
+            response_text = get_gemini_response(prompt, gemini_history, api_key)
             st.markdown(response_text)
-            
-    # 5. Append Assistant Response to history
+
+    # 5. Update UI History
     st.session_state.messages.append({"role": "assistant", "content": response_text})
 
-# --- DOCUMENTATION / README SECTION (In-App) ---
-# [cite: 72] README Requirements embedded for clarity
-with st.expander("📝 Project Documentation & Logic"):
+# --- DOCUMENTATION ---
+with st.expander("📝 Project Documentation"):
     st.markdown("""
     ### Project Overview
-    This chatbot serves as a screen for **TalentScout**, automating the collection of candidate data and testing technical proficiency.
+    This chatbot screens candidates for **TalentScout**. It uses Google's Gemini model to conduct a natural language interview.
     
     ### Functionality
-    * **Greeting:** Auto-initializes context[cite: 20].
-    * **Data Collection:** Prompts for Name, Email, Phone, Experience, Position, Location, and Tech Stack .
-    * **Technical Questions:** Uses LLM logic to detect "Tech Stack" inputs and dynamically generates 3-5 relevant questions[cite: 34].
-    * **Privacy:** No data is stored permanently; `session_state` is volatile (clears on refresh)[cite: 66].
+    * **Information Gathering:** Collects Name, Email, Experience, etc. [cite: 24-31].
+    * **Context Management:** Uses `model.start_chat(history=...)` to maintain conversation flow[cite: 40].
+    * **Tech Questions:** Dynamically generates questions based on user-provided tech stack [cite: 34-37].
     
-    ### Tech Stack
-    * **Frontend:** Streamlit 
-    * **Logic:** Python 3.9+ [cite: 49]
-    * **AI:** OpenAI GPT-3.5/4 (via API) [cite: 54]
+    ### Libraries Used
+    * `streamlit`: User Interface.
+    * `google-generativeai`: Interaction with Gemini LLM.
     """)
