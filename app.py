@@ -1,10 +1,11 @@
 import streamlit as st
 import os
 import re
-from openai import OpenAI
+import google.generativeai as genai
 
-# ================= OPENAI CLIENT =================
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# ================= GEMINI CONFIG =================
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # ================= STREAMLIT CONFIG =================
 st.set_page_config(
@@ -146,15 +147,13 @@ if user_input:
                 })
                 st.session_state.awaiting_answer = False
 
-    # ---------- TECHNICAL QUESTIONS ----------
+    # ---------- TECHNICAL QUESTIONS (GEMINI) ----------
     elif step == "technical":
 
-        # Move index only after answering a question
         if st.session_state.awaiting_answer:
             st.session_state.tech_index += 1
             st.session_state.awaiting_answer = False
 
-        # Generate questions once
         if not st.session_state.tech_questions:
             prompt = f"""
 You are a technical interviewer.
@@ -163,19 +162,13 @@ Candidate tech stack:
 {st.session_state.candidate.get("tech_stack")}
 
 Generate exactly 3 technical interview questions.
-Return one question per line.
+Return one question per line only.
 """
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "system", "content": prompt}],
-                temperature=0.4
-            )
-
+            response = model.generate_content(prompt)
             st.session_state.tech_questions = [
-                q.strip() for q in response.choices[0].message.content.split("\n") if q.strip()
+                q.strip() for q in response.text.split("\n") if q.strip()
             ]
 
-        # Ask next question
         if st.session_state.tech_index < len(st.session_state.tech_questions):
             st.session_state.messages.append({
                 "role": "assistant",
