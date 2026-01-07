@@ -9,15 +9,17 @@ with st.sidebar:
     st.header("Configuration")
     st.write("Powered by **Google Gemini Pro**")
     
-    # Securely input API Key
-    api_key = st.text_input("Enter Google Gemini API Key", type="password")
-    
-    st.info(
-        "**Note:** You can get a free API key from Google AI Studio. "
-        "The bot will use simulated responses if no key is provided."
-    )
-    
-    # Button to reset the conversation
+    # STEP 1: Check if the key is in secrets.toml
+    if "GOOGLE_API_KEY" in st.secrets:
+        api_key = st.secrets["GOOGLE_API_KEY"]
+        st.success("API Key loaded from secrets! ✅")
+        
+    # STEP 2: If not found in secrets, ask the user
+    else:
+        api_key = st.text_input("Enter Google Gemini API Key", type="password")
+        st.info("Tip: Add your key to .streamlit/secrets.toml to skip this step.")
+
+    # Reset button
     if st.button("Reset Conversation"):
         st.session_state.messages = []
         st.session_state.chat_history = []
