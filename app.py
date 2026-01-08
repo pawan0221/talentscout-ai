@@ -81,30 +81,13 @@ if prompt := st.chat_input("Type your response..."):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Prepare Gemini History
-    gemini_history = []
-    for msg in st.session_state.messages[:-1]:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
-
-    import time
-
-def get_gemini_response(user_input, history, model_name, api_key):
-    if not api_key:
-        return "⚠️ Please enter an API Key."
-
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-        chat = model.start_chat(history=history)
-        
-        # Try to send message
-        response = chat.send_message(SYSTEM_INSTRUCTION + "\nUser: " + user_input)
-        return response.text
-
-    except Exception as e:
-        error_msg = str(e)
-        # Check for Quota Error (429)
+   # Get Response
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response_text = get_gemini_response(prompt, gemini_history, selected_model_name, api_key)
+            st.markdown(response_text)
+    
+    st.session_state.messages.append({"role": "assistant", "content": response_text})
         if "429" in error_msg:
             return "⚠️ **Quota Exceeded.** Please wait 1 minute or switch to a different model in the sidebar."
         return f"Error: {error_msg}"
