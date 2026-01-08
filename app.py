@@ -81,13 +81,16 @@ if prompt := st.chat_input("Type your response..."):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-   # Get Response
+    # Prepare Gemini History
+    gemini_history = []
+    for msg in st.session_state.messages[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg["content"]]})
+
+    # Get Response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response_text = get_gemini_response(prompt, gemini_history, selected_model_name, api_key)
             st.markdown(response_text)
     
     st.session_state.messages.append({"role": "assistant", "content": response_text})
-        if "429" in error_msg:
-            return "⚠️ **Quota Exceeded.** Please wait 1 minute or switch to a different model in the sidebar."
-        return f"Error: {error_msg}"
