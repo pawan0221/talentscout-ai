@@ -1,96 +1,114 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="🤖")
+st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="⚡")
 
 # --- SIDEBAR & SETUP ---
 with st.sidebar:
     st.header("Configuration")
+    st.write("Powered by **Groq** (Llama 3 / Mixtral)")
     
     # 1. API Key Setup
-    if "GOOGLE_API_KEY" in st.secrets:
-        api_key = st.secrets["GOOGLE_API_KEY"]
+    if "GROQ_API_KEY" in st.secrets:
+        api_key = st.secrets["GROQ_API_KEY"]
         st.success("Key loaded from secrets! ✅")
     else:
-        api_key = st.text_input("Enter Google Gemini API Key", type="password")
+        api_key = st.text_input("Enter Groq API Key (gsk_...)", type="password")
 
-    # 2. MODEL DEBUGGER & SELECTOR
-    # This block fixes the 404 Error by finding what ACTUALLY exists
-    selected_model_name = "gemini-pro" # default fallback
-    
-    if api_key:
-        try:
-            genai.configure(api_key=api_key)
-            # Fetch all models that support content generation
-            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
-            st.markdown("---")
-            st.write("🔹 **Available Models Detected:**")
-            # Let user choose from the valid list
-            selected_model_name = st.selectbox("Select Model", models, index=0 if models else 0)
-        except Exception as e:
-            st.error(f"Could not list models: {e}")
+    # 2. Model Selector
+    # Groq supports several models. Llama 3 is a great default.
+    model_options = ["llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
+    selected_model = st.selectbox("Select Model", model_options, index=1)
 
     if st.button("Reset Conversation"):
         st.session_state.messages = []
         st.rerun()
 
 # --- PROMPT LOGIC ---
-SYSTEM_INSTRUCTION = """
-You are "TalentScout", a hiring assistant.
-1. Ask for: Name, Email, Phone, Experience, Position, Location, Tech Stack (one by one).
-2. AFTER Tech Stack is confirmed, generate 3-5 technical questions based specifically on that stack.
-3. If user says 'exit', say goodbye.
+SYSTEM_PROMPT = """
+You are "TalentScout", a professional hiring assistant for a tech recruitment agency.
+
+1. **Phase 1: Screening.** Collect these details one by one (do not ask all at once):
+   - Full Name
+   - Email
+   - Phone
+   - Years of Experience
+   - Desired Position
+   - Location
+   - Tech Stack
+
+2. **Phase 2: Technical Check.** - ONCE the user confirms their Tech Stack, generate 3-5 challenging technical questions specific to those tools.
+   - Ask the user to answer them.
+
+3. **Rules:**
+   - Keep responses concise.
+   - If the user says "exit" or "quit", conclude the interview professionally.
 """
 
 # --- SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! Welcome to TalentScout. What is your full name?"}
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "assistant", "content": "Hello! Welcome to TalentScout. I'm here to assist with your initial screening. To get started, could you please tell me your full name?"}
     ]
 
 # --- HELPER FUNCTION ---
-def get_gemini_response(user_input, history, model_name, api_key):
+def get_groq_response(messages, model_name, api_key):
     if not api_key:
-        return "⚠️ Please enter an API Key in the sidebar to continue."
+        return "⚠️ Please enter your Groq API Key in the sidebar."
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name) # Use the specific name found in sidebar
+        client = Groq(api_key=api_key)
         
-        # Gemini history format
-        chat = model.start_chat(history=history)
-        response = chat.send_message(SYSTEM_INSTRUCTION + "\nUser: " + user_input)
-        return response.text
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1024,
+            top_p=1,
+            stream=False,
+            stop=None,
+        )
+        return completion.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
 
 # --- MAIN CHAT UI ---
-st.title("TalentScout Hiring Assistant 🤖")
+st.title("TalentScout Hiring Assistant ⚡")
 
 # Display History
+# We skip the first message (index 0) because it is the hidden 'system' prompt
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if message["role"] != "system":
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
 # Handle Input
 if prompt := st.chat_input("Type your response..."):
-    # Show user message
+    # 1. Show User Message
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Prepare Gemini History
-    gemini_history = []
-    for msg in st.session_state.messages[:-1]:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_history.append({"role": role, "parts": [msg["content"]]})
+    # 2. Check Exit
+    if prompt.lower() in ["exit", "quit", "bye"]:
+        goodbye_msg = "Thank you for your time. Your application has been recorded. Goodbye!"
+        with st.chat_message("assistant"):
+            st.markdown(goodbye_msg)
+        st.session_state.messages.append({"role": "assistant", "content": goodbye_msg})
+        st.stop()
 
-    # Get Response
+    # 3. Get AI Response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response_text = get_gemini_response(prompt, gemini_history, selected_model_name, api_key)
+            # Pass the entire message history to Groq so it maintains context
+            response_text = get_groq_response(
+                st.session_state.messages, 
+                selected_model, 
+                api_key
+            )
             st.markdown(response_text)
     
+    # 4. Save AI Response
     st.session_state.messages.append({"role": "assistant", "content": response_text})
