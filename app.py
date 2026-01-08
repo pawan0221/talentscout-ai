@@ -7,7 +7,7 @@ st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="⚡")
 # --- SIDEBAR & SETUP ---
 with st.sidebar:
     st.header("Configuration")
-    st.write("Powered by **Groq** (Llama 3 / Mixtral)")
+    st.write("Powered by **Groq**")
     
     # 1. API Key Setup
     if "GROQ_API_KEY" in st.secrets:
@@ -17,9 +17,14 @@ with st.sidebar:
         api_key = st.text_input("Enter Groq API Key (gsk_...)", type="password")
 
     # 2. Model Selector
-    # Groq supports several models. Llama 3 is a great default.
-    model_options = ["llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
-    selected_model = st.selectbox("Select Model", model_options, index=1)
+    # UPDATED: Using currently active Groq models
+    model_options = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
+    ]
+    selected_model = st.selectbox("Select Model", model_options, index=0)
 
     if st.button("Reset Conversation"):
         st.session_state.messages = []
@@ -78,7 +83,6 @@ def get_groq_response(messages, model_name, api_key):
 st.title("TalentScout Hiring Assistant ⚡")
 
 # Display History
-# We skip the first message (index 0) because it is the hidden 'system' prompt
 for message in st.session_state.messages:
     if message["role"] != "system":
         with st.chat_message(message["role"]):
@@ -102,7 +106,6 @@ if prompt := st.chat_input("Type your response..."):
     # 3. Get AI Response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            # Pass the entire message history to Groq so it maintains context
             response_text = get_groq_response(
                 st.session_state.messages, 
                 selected_model, 
